@@ -1,0 +1,134 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <errno.h>
+#include <string.h>
+#include <time.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include "commando.h"
+
+// int main(){
+  // int fd = open("./quote.txt", O_RDONLY);
+  // char *expect_read =
+    // "Object-oriented programming is an exceptionally bad idea which could\n"
+    // "only have originated in California.\n"
+    // "\n"
+    // "-- Edsger Dijkstra\n"
+    // "";
+  // int bytes_read = -1;
+  // char *actual_read = read_all(fd, &bytes_read);
+  // int result = close(fd);
+  // actual_read[bytes_read] = '\0';
+  // free(actual_read);
+  // return 0;
+// }
+
+cmd_t *cmd_new(char *argv[]){
+  cmd_t *cmd;
+  cmd = malloc(sizeof(cmd_t));
+  strcpy(cmd->name, argv[0]);
+  for(int i = 0; i < ARG_MAX; i++){
+    if(argv[i] != NULL){
+      cmd->argv[i] = strdup(argv[i]);
+    }
+    else{
+      cmd->argv[i] = NULL;
+      break;
+    }
+  }
+  cmd->finished = 0;
+  snprintf(cmd->str_status,STATUS_LEN+1,"%s","INIT");
+  cmd->pid = -1;
+  cmd->out_pipe[0] = -1;
+  cmd->out_pipe[1] = -1;
+  cmd->status = -1;
+  cmd->output = NULL;
+  cmd->output_size = -1;
+
+  return cmd;
+}
+
+void cmd_free(cmd_t *cmd){
+  // free(cmd->argv);
+  // if(cmd->output != NULL){
+    // free(cmd->output);
+  // }
+  free(cmd);
+}
+
+void cmd_start(cmd_t *cmd){
+  snprintf(cmd->str_status,STATUS_LEN+1,"%s","RUN");
+  pipe(cmd->out_pipe);
+
+  pid_t child = fork();
+  if(child == 0){
+    dup2(cmd->out_pipe[PWRITE], STDOUT_FILENO);
+    close(cmd->out_pipe[PREAD]);
+  }
+  else{
+    cmd->pid = child;
+    close(cmd->out_pipe[PWRITE]);
+  }
+}
+
+void cmd_update_state(cmd_t *cmd, int block){
+  pid_t pid;
+  int status;
+  if(cmd->finished == 0){
+    pid = waitpid(cmd->pid, &status, block);
+    if(pid == cmd->pid){
+      if(WIFEXITED(status)){
+        cmd->status = WEXITSTATUS(status);
+        snprintf(cmd->str_status,STATUS_LEN+1,"EXIT(%d)",cmd->status);
+        cmd->finished = 1;
+        cmd_fetch_output(cmd);
+        printf("@!!! %s[#%d]: %s\n",cmd->name, cmd->pid, cmd->str_status);
+      }
+    }
+  }
+}
+
+char *read_all(int fd, int *nread){//have a big problem
+  int size = 1024;
+  int bytesread;
+  char *buffer = (char *)malloc(sizeof(size));
+  bytesread = read(fd, buffer, size);
+	fprintf(stderr,"Starting loop\n");
+fprintf(stderr,"buf ptr is %p\n",buffer);
+  while(bytesread >= size){ //bytesread == 0
+
+	printf("Size is %d\n",size);
+    size *= 2;
+    buffer = realloc(buffer, size);
+    bytesread = read(fd, buffer, size);
+
+
+  }
+  buffer[bytesread+1] = '\0';
+  *nread = bytesread;
+
+  return buffer;
+
+}
+
+void cmd_fetch_output(cmd_t *cmd){
+  int nread = 0;
+  if(cmd->finished == 0){
+    printf("%s[#%d] not finished yet\n",cmd->name, cmd->pid);
+    return;
+  }
+  cmd->output = read_all(cmd->out_pipe[PREAD], &nread);
+  cmd->output_size = nread;
+  close(cmd->out_pipe[PREAD]);
+}
+
+void cmd_print_output(cmd_t *cmd){
+  if(cmd->output != NULL){
+    printf("%p\n", cmd->output);
+  }
+  else {
+    printf("%s[#%d] has no output yet\n",cmd->name, cmd->pid);
+  }
+}
